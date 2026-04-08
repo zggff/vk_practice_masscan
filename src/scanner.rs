@@ -26,15 +26,15 @@ impl std::fmt::Display for Protocol {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ScanResult {
+pub struct IpInfo {
     pub ip: String,
     pub port: u16,
     pub protocol: Protocol,
     pub banner: Option<String>,
 }
 
-impl ScanResult {
-    pub async fn enrich(&mut self) {
+impl IpInfo {
+    async fn enrich(&mut self) {
         let addr = format!("{}:{}", self.ip, self.port);
         info!("[{}] attempting to enrich ", addr);
 
@@ -64,19 +64,19 @@ impl ScanResult {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct ScanResults(pub Vec<ScanResult>);
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ScanResult(Vec<IpInfo>);
 
-impl std::ops::Deref for ScanResults {
-    type Target = Vec<ScanResult>;
+impl std::ops::Deref for ScanResult {
+    type Target = Vec<IpInfo>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl IntoIterator for ScanResults {
-    type Item = ScanResult;
+impl IntoIterator for ScanResult {
+    type Item = IpInfo;
 
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
@@ -85,20 +85,26 @@ impl IntoIterator for ScanResults {
     }
 }
 
-impl From<Vec<ScanResult>> for ScanResults {
-    fn from(value: Vec<ScanResult>) -> Self {
+impl Into<Vec<IpInfo>> for ScanResult {
+    fn into(self) -> Vec<IpInfo> {
+        self.0
+    }
+}
+
+impl From<Vec<IpInfo>> for ScanResult {
+    fn from(value: Vec<IpInfo>) -> Self {
         return Self(value);
     }
 }
 
-impl ScanResults {
-    pub fn save(&self, path: &str) -> anyhow::Result<()> {
+impl ScanResult {
+    pub fn save_result(&self, path: &str) -> anyhow::Result<()> {
         let json = serde_json::to_string_pretty(self)?;
         fs::write(path, json)?;
         Ok(())
     }
 
-    pub fn load(path: &str) -> anyhow::Result<Self> {
+    pub fn load_result(path: &str) -> anyhow::Result<Self> {
         let data = fs::read_to_string(path)?;
         let parsed = serde_json::from_str(&data)?;
         Ok(parsed)
@@ -114,14 +120,20 @@ impl ScanResults {
             .iter()
             .filter(|r| !set.contains(&format!("{}:{}", r.ip, r.port)))
             .cloned()
-            .collect::<Vec<ScanResult>>()
+            .collect::<Vec<IpInfo>>()
             .into()
     }
 
-    pub async fn run_masscan(ip_range: &str, port_range: &str, rate: usize) -> Result<Self> {
+    /// populate scan results using masscan
+    pub async fn populate(
+        self,
+        ip_range: &str,
+        port_range: &str,
+        masscan_rate: usize,
+    ) -> Result<Self> {
         info!(
             "running masscan over '{}', ports '{}' with rate: {}",
-            ip_range, port_range, rate
+            ip_range, port_range, masscan_rate
         );
         let output = Command::new("sudo")
             .arg("masscan")
@@ -129,7 +141,7 @@ impl ScanResults {
             .arg("-p")
             .arg(port_range)
             .arg("--rate")
-            .arg(rate.to_string())
+            .arg(masscan_rate.to_string())
             .arg("-oJ")
             .arg("-")
             .output()
@@ -156,7 +168,7 @@ impl ScanResults {
         let parsed: Vec<MasscanIp> = serde_json::from_str(&json)?;
         for ip in parsed {
             for port in ip.ports {
-                results.push(ScanResult {
+                results.push(IpInfo {
                     ip: ip.ip.clone(),
                     port: port.port as u16,
                     protocol: port.proto,
@@ -168,6 +180,8 @@ impl ScanResults {
 
         Ok(results.into())
     }
+
+    /// enrich scan results by grabbing banners
     pub async fn enrich(mut self, threads: usize) -> Self {
         info!("enriching {} using {} threads", self.len(), threads);
         stream::iter(&mut self.0)

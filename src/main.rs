@@ -4,16 +4,17 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
-use crate::scanner::ScanResults;
+use crate::scanner::ScanResult;
 
 mod scanner;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
-    pub ip_range: String,
-    pub port_range: String,
-    pub threads: usize,
-    pub save_file: String,
+struct Config {
+    ip_range: String,
+    port_range: String,
+    threads: usize,
+    masscan_rate: usize,
+    save_file: String,
 }
 
 impl Default for Config {
@@ -21,7 +22,8 @@ impl Default for Config {
         Self {
             ip_range: "192.168.0.1/24".to_string(),
             port_range: "80,443".to_string(),
-            threads: 1000,
+            threads: 100,
+            masscan_rate: 1000,
             save_file: "output.json".to_string(),
         }
     }
@@ -44,12 +46,13 @@ async fn run_program(path: String) -> Result<()> {
     };
 
     let old_results = if Path::new(&config.save_file).exists() {
-        ScanResults::load(&config.save_file)?
+        ScanResult::load_result(&config.save_file)?
     } else {
-        ScanResults(Vec::new())
+        ScanResult::default()
     };
 
-    let results = ScanResults::run_masscan(&config.ip_range, &config.port_range, config.threads)
+    let results = ScanResult::default()
+        .populate(&config.ip_range, &config.port_range, config.masscan_rate)
         .await?
         .enrich(config.threads)
         .await;
@@ -61,7 +64,7 @@ async fn run_program(path: String) -> Result<()> {
         println!()
     }
 
-    results.save(&config.save_file)
+    results.save_result(&config.save_file)
 }
 
 #[derive(Parser, Debug)]
