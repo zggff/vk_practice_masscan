@@ -1,8 +1,10 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use log::{info, error};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::Path;
+use std::time::Duration;
+use tokio_cron_scheduler::{Job, JobScheduler};
 
 use crate::scanner::ScanResult;
 
@@ -29,17 +31,9 @@ impl Default for Config {
     }
 }
 
-impl Config {
-    fn write_example_file(path: String) -> Result<()> {
-        let toml = toml::to_string_pretty(&Config::default())?;
-        fs::write(path, toml)?;
-        Ok(())
-    }
-}
-
-async fn run_program(path: String) -> Result<()> {
+async fn run_once(path: &str) -> Result<()> {
     let config: Config = if Path::new(&path).exists() {
-        let data = fs::read_to_string(path)?;
+        let data = std::fs::read_to_string(path)?;
         toml::from_str(&data)?
     } else {
         Config::default()
@@ -69,6 +63,9 @@ async fn run_program(path: String) -> Result<()> {
 
 #[derive(Parser, Debug)]
 struct Args {
+    /// path to toml config file
+    config_path: String,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -76,25 +73,50 @@ struct Args {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// create an example configuration file
-    Example {
-        /// path to whre to save the example config file
-        #[arg()]
-        filepath: String,
-    },
-    /// create program
-    Run {
-        /// path to config file
-        #[arg()]
-        filepath: String,
+    Example,
+    /// run program once
+    Run,
+    /// run program on schedule
+    Schedule {
+        ///schedule: Cron format string
+        schedule: String,
     },
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     env_logger::init();
     let args = Args::parse();
     match args.command {
-        Commands::Example { filepath } => Config::write_example_file(filepath),
-        Commands::Run { filepath } => run_program(filepath).await,
-    }
+        Commands::Example => {
+            let toml = toml::to_string_pretty(&Config::default())?;
+            std::fs::write(args.config_path, toml)?;
+        }
+        Commands::Run => {
+            run_once(&args.config_path).await?;
+        }
+        Commands::Schedule { schedule } => {
+            let mut sched = JobScheduler::new().await?;
+            sched.shutdown_on_ctrl_c();
+            sched.set_shutdown_handler(Box::new(|| {
+                Box::pin(async move {
+                    info!("shutting down");
+                })
+            }));
+            sched
+                .add(Job::new_async(&schedule, move |_uuid, mut _l| {
+                    let config_path = args.config_path.clone();
+                    Box::pin(async move { if let Err(e) = run_once(&config_path).await {
+                        error!("scheduled job failed with '{:?}'", e);
+                    } })
+                })?)
+                .await?;
+            info!("staring scheduled jobs");
+            sched.start().await?;
+            loop {
+                tokio::time::sleep(Duration::from_mins(10)).await;
+            }
+        }
+    };
+    Ok(())
 }
