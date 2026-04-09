@@ -14,15 +14,15 @@ use log::{info, warn};
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
-    TCP,
-    UDP,
+    Tcp,
+    Udp,
 }
 
 impl std::fmt::Display for Protocol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Protocol::TCP => f.write_str("TCP"),
-            Protocol::UDP => f.write_str("UDP"),
+            Protocol::Tcp => f.write_str("TCP"),
+            Protocol::Udp => f.write_str("UDP"),
         }
     }
 }
@@ -87,15 +87,15 @@ impl IntoIterator for ScanResult {
     }
 }
 
-impl Into<Vec<IpInfo>> for ScanResult {
-    fn into(self) -> Vec<IpInfo> {
-        self.0
+impl From<ScanResult> for Vec<IpInfo> {
+    fn from(value: ScanResult) -> Vec<IpInfo> {
+        value.0
     }
 }
 
 impl From<Vec<IpInfo>> for ScanResult {
     fn from(value: Vec<IpInfo>) -> Self {
-        return Self(value);
+        Self(value)
     }
 }
 
@@ -172,7 +172,7 @@ impl ScanResult {
             for port in ip.ports {
                 results.push(IpInfo {
                     ip: ip.ip.clone(),
-                    port: port.port as u16,
+                    port: port.port,
                     protocol: port.proto,
                     banner: None,
                 });
