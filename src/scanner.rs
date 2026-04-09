@@ -1,11 +1,13 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::process::Command;
+use tokio::time;
 
 use log::{info, warn};
 
@@ -34,31 +36,31 @@ pub struct IpInfo {
 }
 
 impl IpInfo {
+    async fn try_get_response(stream: &mut TcpStream, message: Option<&str>) -> Option<String> {
+        if let Some(message) = message {
+            stream.write_all(message.as_bytes()).await.ok()?;
+        }
+        let mut buf = vec![0; 1024];
+        match time::timeout(Duration::from_secs(5), stream.read(&mut buf)).await {
+            Ok(Ok(n)) if n > 0 => Some(String::from_utf8_lossy(&buf[..n]).to_string()),
+            _ => None,
+        }
+    }
     async fn enrich(&mut self) {
+        let messages = [None, Some("GET / HTTP/1.0\r\n\r\n")];
         let addr = format!("{}:{}", self.ip, self.port);
         info!("[{}] attempting to enrich ", addr);
-
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            TcpStream::connect(&addr),
-        )
-        .await
-        {
+        match time::timeout(Duration::from_secs(5), TcpStream::connect(&addr)).await {
             Ok(Ok(mut stream)) => {
-                let _ = stream.write_all(b"\n").await;
-
-                let mut buf = vec![0; 1024];
-                if let Ok(n) = stream.read(&mut buf).await {
-                    if n > 0 {
-                        self.banner = Some(String::from_utf8_lossy(&buf[..n]).to_string());
-                    }
+                for message in messages {
+                    self.banner =
+                        self.banner
+                            .take()
+                            .or(Self::try_get_response(&mut stream, message).await);
                 }
             }
-            Ok(Err(_)) => {
+            _ => {
                 warn!("[{}] failed to connect", addr)
-            }
-            Err(_) => {
-                warn!("[{}] timeout", addr)
             }
         };
     }
@@ -105,8 +107,8 @@ impl ScanResult {
     }
 
     pub fn load_result(path: &str) -> anyhow::Result<Self> {
-        let data = fs::read_to_string(path)?;
-        let parsed = serde_json::from_str(&data)?;
+        let data = fs::read_to_string(path).context("failed to read json file")?;
+        let parsed = serde_json::from_str(&data).context("failed to parse json file")?;
         Ok(parsed)
     }
 
