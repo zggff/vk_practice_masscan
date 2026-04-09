@@ -1,112 +1,25 @@
-use anyhow::{Context, Result};
-use frankenstein::{
-    AsyncTelegramApi,
-    client_reqwest::Bot,
-    methods::{SendMessageParams, VerifyChatParams},
-    types::ChatId,
-};
-use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
+use anyhow::Result;
+use log::{error, info};
+use result::ScanResult;
+use std::fmt::Write;
 use std::time::Duration;
 use tokio_cron_scheduler::{Job, JobScheduler};
-use std::fmt::Write;
-use result::ScanResult;
 
+pub mod config;
+mod notifier;
 mod result;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TelegramConfig {
-    chat_id: ChatId,
-    bot_token: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct ScannerConfig {
-    ip_range: String,
-    port_range: String,
-    threads: usize,
-    masscan_rate: usize,
-    save_file: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Config {
-    scanner: ScannerConfig,
-    telegram: Option<TelegramConfig>,
-}
-
-impl Config {
-    pub fn example() -> Self {
-        Self {
-            telegram: Some(TelegramConfig {
-                chat_id: ChatId::String("your chat id".to_string()),
-                bot_token: "your bot token".to_string(),
-            }),
-            scanner: ScannerConfig {
-                save_file: Some("path to your save file".to_string()),
-                ..Default::default()
-            },
-        }
-    }
-}
-
-impl Default for ScannerConfig {
-    fn default() -> Self {
-        Self {
-            ip_range: "192.168.0.1/24".to_string(),
-            port_range: "80,443".to_string(),
-            threads: 100,
-            masscan_rate: 1000,
-            save_file: None,
-        }
-    }
-}
-
-impl Config {
-    pub fn read_from_file(path: &str) -> Result<Self> {
-        let data = std::fs::read_to_string(path)?;
-        toml::from_str(&data).context("failed to parse config file")
-    }
-}
+use config::Config;
 
 #[derive(Clone)]
 pub struct Scanner {
     config: Config,
-    bot: Option<(Bot, ChatId)>,
 }
 
 impl Scanner {
     pub async fn from_file(path: &str) -> Result<Self> {
         let config = Config::read_from_file(path).unwrap_or_default();
-        let bot = match &config.telegram {
-            Some(telegram) => {
-                let bot = Bot::new(&telegram.bot_token);
-                let verify_chat_params = VerifyChatParams {
-                    chat_id: telegram.chat_id.clone(),
-                    custom_description: None,
-                };
-                match bot
-                    .verify_chat(&verify_chat_params)
-                    .await
-                    .map(|res| res.result)
-                    .unwrap_or_default()
-                {
-                    true => {
-                        info!("created telegram bot");
-                        Some((bot, telegram.chat_id.clone()))
-                    }
-                    false => {
-                        warn!("failed to create telegram bot. Check bot token or chat id");
-                        None
-                    }
-                }
-            }
-            None => None,
-        };
-        Ok(Self {
-            config,
-            bot,
-        })
+        Ok(Self { config })
     }
 
     pub async fn run_on_schedule(self, schedule: String) -> Result<()> {
@@ -172,12 +85,12 @@ impl Scanner {
             results.save_result(path)?
         }
 
-        if let Some((bot, id)) = &self.bot {
-            let send_message_params = SendMessageParams::builder()
-                .chat_id(id.clone())
-                .text(message)
-                .build();
-            bot.send_message(&send_message_params).await?;
+        if let Some(telegram) = &self.config.telegram {
+            notifier::send_telegram(&telegram.bot_token, &telegram.chat_id, &message).await?;
+        }
+
+        if let Some(vk) = &self.config.vk {
+            notifier::send_vk(&vk.access_token, &vk.user_id, &message).await?;
         }
 
         Ok(())

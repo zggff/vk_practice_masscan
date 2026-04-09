@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 mod scanner;
-use scanner::{Config, Scanner};
+use scanner::{config::Config, Scanner};
 
 #[derive(Parser, Debug)]
 struct Args {

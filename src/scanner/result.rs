@@ -47,7 +47,11 @@ impl IpInfo {
         }
     }
     async fn enrich(&mut self) {
-        let messages = [None, Some("GET / HTTP/1.0\r\n\r\n")];
+        let messages = [
+            None,
+            Some("HEAD / HTTP/1.0\r\n\r\n"),
+            Some("GET / HTTP/1.0\r\n\r\n"),
+        ];
         let addr = format!("{}:{}", self.ip, self.port);
         info!("[{}] attempting to enrich ", addr);
         match time::timeout(Duration::from_secs(5), TcpStream::connect(&addr)).await {
