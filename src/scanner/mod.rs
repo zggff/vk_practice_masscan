@@ -77,7 +77,7 @@ pub struct Scanner {
 
 impl Scanner {
     pub async fn from_file(path: &str) -> Result<Self> {
-        let config = Config::read_from_file(&path).unwrap_or_default();
+        let config = Config::read_from_file(path).unwrap_or_default();
         let bot = match &config.telegram {
             Some(telegram) => {
                 let bot = Bot::new(&telegram.bot_token);
@@ -104,8 +104,8 @@ impl Scanner {
             None => None,
         };
         Ok(Self {
-            config: config,
-            bot: bot,
+            config,
+            bot,
         })
     }
 
