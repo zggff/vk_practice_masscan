@@ -1,0 +1,47 @@
+graph TD
+    Start([Запуск программы]) --> Parse[Разбор аргументов командной строки]
+    Parse --> CheckCmd{Какая команда выбрана?}
+
+    CheckCmd -->|Example| CmdEx1[Генерация шаблона конфига]
+    CmdEx1 --> CmdEx2[Сохранение конфига в TOML файл]
+    CmdEx2 --> EndEx([Завершение])
+
+    CheckCmd -->|Schedule| CmdSch1[Чтение конфига]
+    CmdSch1 --> CmdSch2[Инициализация планировщика JobScheduler]
+    CmdSch2 --> CmdSch3[Добавление задачи по расписанию cron]
+    CmdSch3 --> CmdSch4[Бесконечный цикл ожидания]
+    CmdSch4 -.->|По расписанию| ScanStart
+
+    CheckCmd -->|Run| CmdRun[Чтение конфига]
+    CmdRun --> ScanStart
+
+    subgraph Scanner Logic [Основной алгоритм сканирования]
+        ScanStart([Запуск сканирования]) --> LoadOld[Загрузка старых результатов из save_file]
+        LoadOld --> RunMasscan[Запуск sudo masscan: IP и порты]
+        RunMasscan --> ParseJSON[Парсинг JSON вывода masscan]
+        
+        ParseJSON --> EnrichStart[Асинхронное обогащение результатов]
+        
+            subgraph Enrich [Сбор баннеров]
+            EnrichStart --> TcpConn{Попытка TCP соединения}
+            TcpConn -->|Успех| SendHttp[Отправка HEAD и GET запросов]
+            SendHttp --> SaveBanner[Чтение ответа и сохранение баннера]
+            TcpConn -->|Таймаут/Ошибка| SkipBanner[Пропуск]
+        end
+        
+        SaveBanner --> DiffCheck
+        SkipBanner --> DiffCheck
+
+        DiffCheck[Сравнение новых результатов со старыми / diff]
+        DiffCheck --> FormatMsg[Формирование текста отчета]
+        FormatMsg --> SaveNew[Перезапись save_file новыми данными]
+        
+        SaveNew --> NotifyCheck{Есть ли настройки уведомлений?}
+        
+        NotifyCheck -->|Telegram| NotifyTG[Отправка POST в Telegram API]
+        NotifyCheck -->|VK| NotifyVK[Отправка POST в VK API]
+        NotifyCheck -->|Нет| EndScan([Завершение сканирования])
+        
+        NotifyTG --> EndScan
+        NotifyVK --> EndScan
+    end
